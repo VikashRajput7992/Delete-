@@ -7,6 +7,12 @@ from langchain.chains.question_answering import load_qa_chain
 from langchain.prompts import PromptTemplate
 import os
 
+
+AIzaSyBH5LSI4BdiXsclWLVQ5E4
+-ovjgAm0qhLM
+
+
+
 # --- API Key Configuration ---
 # For demonstration, we'll use a sidebar input.
 # For production, it's highly recommended to use st.secrets.
