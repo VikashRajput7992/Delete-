@@ -1,10 +1,9 @@
 # rag_faq_bot_gemini.py
 
 # Install before running:
-# pip install chromadb sentence-transformers langchain-google-genai
+# pip install chromadb langchain-google-genai
 
 import chromadb
-from sentence_transformers import SentenceTransformer
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 import os
 
@@ -35,99 +34,49 @@ faqs = [
 ]
 
 # -----------------------
-# Step 2: Setup Vector DB
-# -----------------------
-chroma_client = chromadb.Client()
-collection = chroma_client.create_collection("banking_faqs")
-
-# Load embeddings model (using SentenceTransformer for now, can switch to Gemini embeddings)
-model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Alternative: Use Google Gemini embeddings
-# Make sure to set GOOGLE_API_KEY environment variable
-# gemini_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-
-# Generate embeddings for all FAQs
-embeddings = model.encode(faqs)
-
-# Add FAQs into ChromaDB
-collection.add(
-    documents=faqs,
-    embeddings=embeddings.tolist(),
-    ids=[str(i) for i in range(len(faqs))]
-)
-
-# -----------------------
-# Step 3: Retrieval + RAG with Gemini
+# Step 2: Setup Vector DB with Gemini Embeddings
 # -----------------------
 
-def rag_answer(user_query: str):
-    # Encode user query
-    query_embedding = model.encode([user_query])
-
-    # Search top 3 relevant FAQs
-    results = collection.query(
-        query_embeddings=query_embedding.tolist(),
-        n_results=3
-    )
-
-    # Extract retrieved FAQs
-    retrieved_faqs = results['documents'][0]
-
-    # Build context
-    context = "\n".join(retrieved_faqs)
-
-    # Build prompt for LLM
-    prompt = f"""
-    You are a helpful banking assistant.
-    Here are some relevant FAQs from the knowledge base:
-    {context}
-
-    User question: {user_query}
-    Answer conversationally using the FAQs above.
-    """
-
-    # Initialize Gemini Chat model
-    # Make sure GOOGLE_API_KEY is set in your environment
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-pro",
-        temperature=0.3,
-        convert_system_message_to_human=True
-    )
-
-    # Get response from Gemini
-    response = llm.invoke(prompt)
+def setup_vector_db():
+    """Initialize ChromaDB with Gemini embeddings"""
+    # Make sure GOOGLE_API_KEY is set
+    if not os.getenv("GOOGLE_API_KEY"):
+        raise ValueError("Please set GOOGLE_API_KEY environment variable")
     
-    return response.content
-
-
-# Alternative function using Gemini embeddings
-def rag_answer_with_gemini_embeddings(user_query: str):
-    """
-    Alternative implementation using Gemini embeddings
-    Make sure to set GOOGLE_API_KEY environment variable
-    """
     # Initialize Gemini embeddings
     gemini_embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
     
-    # Create a new collection for Gemini embeddings
-    gemini_collection = chroma_client.create_collection("banking_faqs_gemini")
+    # Create ChromaDB client and collection
+    chroma_client = chromadb.Client()
+    collection = chroma_client.create_collection("banking_faqs_gemini")
     
     # Generate embeddings using Gemini
+    print("Generating embeddings for FAQs...")
     embeddings = gemini_embeddings.embed_documents(faqs)
     
     # Add FAQs into ChromaDB
-    gemini_collection.add(
+    collection.add(
         documents=faqs,
         embeddings=embeddings,
         ids=[str(i) for i in range(len(faqs))]
     )
     
-    # Encode user query using Gemini
-    query_embedding = gemini_embeddings.embed_query(user_query)
+    print(f"Successfully added {len(faqs)} FAQs to vector database")
+    return collection, gemini_embeddings
+
+# -----------------------
+# Step 3: RAG with Gemini
+# -----------------------
+
+def rag_answer(user_query: str, collection, embeddings_model):
+    """
+    Answer user query using RAG with Gemini models
+    """
+    # Encode user query using Gemini embeddings
+    query_embedding = embeddings_model.embed_query(user_query)
 
     # Search top 3 relevant FAQs
-    results = gemini_collection.query(
+    results = collection.query(
         query_embeddings=[query_embedding],
         n_results=3
     )
@@ -135,18 +84,18 @@ def rag_answer_with_gemini_embeddings(user_query: str):
     # Extract retrieved FAQs
     retrieved_faqs = results['documents'][0]
 
-    # Build context
-    context = "\n".join(retrieved_faqs)
+    # Build context from retrieved FAQs
+    context = "\n".join([f"- {faq}" for faq in retrieved_faqs])
 
-    # Build prompt for LLM
-    prompt = f"""
-    You are a helpful banking assistant.
-    Here are some relevant FAQs from the knowledge base:
-    {context}
+    # Build prompt for Gemini LLM
+    prompt = f"""You are a helpful banking assistant. Use the following relevant FAQs from the knowledge base to answer the user's question.
 
-    User question: {user_query}
-    Answer conversationally using the FAQs above.
-    """
+Relevant FAQs:
+{context}
+
+User question: {user_query}
+
+Please provide a conversational and helpful answer based on the FAQs above. If the question is not covered by the FAQs, politely mention that and provide general guidance."""
 
     # Initialize Gemini Chat model
     llm = ChatGoogleGenerativeAI(
@@ -160,26 +109,59 @@ def rag_answer_with_gemini_embeddings(user_query: str):
     
     return response.content
 
+# -----------------------
+# Step 4: Main execution
+# -----------------------
 
-# -----------------------
-# Step 4: Run example
-# -----------------------
-if __name__ == "__main__":
-    # Make sure to set your GOOGLE_API_KEY environment variable
-    # os.environ["GOOGLE_API_KEY"] = "your-api-key-here"
-    
-    user_query = "I forgot my online banking password. What should I do?"
-    
-    print("=== Using SentenceTransformer embeddings + Gemini LLM ===")
-    answer = rag_answer(user_query)
-    print("User Query:", user_query)
-    print("AI Answer:", answer)
-    
-    print("\n=== Using Gemini embeddings + Gemini LLM ===")
+def main():
+    """Main function to run the RAG FAQ bot"""
     try:
-        answer_gemini = rag_answer_with_gemini_embeddings(user_query)
-        print("User Query:", user_query)
-        print("AI Answer:", answer_gemini)
+        # Setup vector database
+        collection, embeddings_model = setup_vector_db()
+        
+        # Initialize Gemini LLM
+        print("Initializing Gemini LLM...")
+        
+        # Test query
+        user_query = "I forgot my online banking password. What should I do?"
+        
+        print(f"\nUser Query: {user_query}")
+        print("Generating answer...")
+        
+        # Get answer using RAG
+        answer = rag_answer(user_query, collection, embeddings_model)
+        
+        print(f"\nAI Answer: {answer}")
+        
+        # Interactive mode
+        print("\n" + "="*50)
+        print("Interactive FAQ Bot (type 'quit' to exit)")
+        print("="*50)
+        
+        while True:
+            user_input = input("\nYour question: ").strip()
+            
+            if user_input.lower() in ['quit', 'exit', 'q']:
+                print("Thank you for using the banking FAQ bot!")
+                break
+                
+            if not user_input:
+                continue
+                
+            try:
+                answer = rag_answer(user_input, collection, embeddings_model)
+                print(f"\nAnswer: {answer}")
+            except Exception as e:
+                print(f"Error generating answer: {e}")
+        
     except Exception as e:
-        print(f"Error with Gemini embeddings: {e}")
-        print("Make sure to set GOOGLE_API_KEY environment variable")
+        print(f"Error: {e}")
+        print("\nMake sure to:")
+        print("1. Set GOOGLE_API_KEY environment variable")
+        print("2. Install required packages: pip install chromadb langchain-google-genai")
+
+if __name__ == "__main__":
+    # Set your Google API key here or as environment variable
+    # os.environ["GOOGLE_API_KEY"] = "your-google-api-key-here"
+    
+    main()
