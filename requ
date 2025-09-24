@@ -1,0 +1,17 @@
+# Netflix Recommendation System - Minimal Production Requirements
+# Core dependencies only for production deployment
+
+# Essential Data Science
+numpy==1.24.3
+pandas==2.0.3
+
+# Machine Learning
+scikit-learn==1.3.0
+xgboost==2.0.3
+
+# Model Persistence
+joblib==1.3.2
+
+# Visualization (for model analysis)
+matplotlib==3.7.2
+seaborn==0.12.2
